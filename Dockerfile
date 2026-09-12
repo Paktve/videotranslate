@@ -1,24 +1,15 @@
-# syntax=docker/dockerfile:1
+FROM python:3.12-slim
 
-FROM golang:1.24-alpine AS build
-
-# Set destination for COPY
 WORKDIR /app
 
-# Download any Go modules
-COPY container_src/go.mod ./
-RUN go mod download
+RUN apt-get update \
+    && apt-get install -y ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy container source code
-COPY container_src/*.go ./
+RUN pip install --no-cache-dir requests edge-tts
 
-# Build
-RUN CGO_ENABLED=0 GOOS=linux go build -o /server
+COPY container_src/server.py /app/server.py
 
-FROM scratch
-COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=build /server /server
 EXPOSE 8080
 
-# Run
-CMD ["/server"]
+CMD ["python", "/app/server.py"] 
