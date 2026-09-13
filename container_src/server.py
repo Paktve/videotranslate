@@ -39,7 +39,21 @@ def run_command(command):
 
 
 def download_video(video_url, output_file):
-    urllib.request.urlretrieve(video_url, output_file)
+    response = requests.get(
+        video_url,
+        headers={
+            "User-Agent": "Mozilla/5.0"
+        },
+        stream=True,
+        timeout=300
+    )
+
+    response.raise_for_status()
+
+    with open(output_file, "wb") as f:
+        for chunk in response.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                f.write(chunk)
 
 
 def get_duration(video_file):
