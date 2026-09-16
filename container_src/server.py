@@ -143,26 +143,22 @@ def translate_text(text):
         return ""
 
     response = requests.get(
-        "https://translate.googleapis.com/translate_a/single",
+        "https://api.mymemory.translated.net/get",
         params={
-            "client": "gtx",
-            "sl": "hi",
-            "tl": "ur",
-            "dt": "t",
-            "q": text
+            "q": text,
+            "langpair": "en|ur"
         },
-        timeout=120
+        timeout=60
     )
 
     response.raise_for_status()
 
     data = response.json()
 
-    translated = ""
+    translated = data.get("responseData", {}).get("translatedText", "")
 
-    for item in data[0]:
-        if item[0]:
-            translated += item[0]
+    if not translated:
+        raise Exception("MyMemory translation failed")
 
     return translated
 
