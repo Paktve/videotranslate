@@ -6,13 +6,15 @@ import shutil
 import subprocess
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
-import urllib.request
 import requests
 
 
 PORT = 8080
 
-ASSEMBLYAI_API_KEY = os.environ.get("ASSEMBLYAI_API_KEY", "")
+ASSEMBLYAI_API_KEY = os.environ.get(
+    "ASSEMBLYAI_API_KEY",
+    ""
+)
 
 UPLOAD_WORKER_URL = os.environ.get(
     "UPLOAD_WORKER_URL",
@@ -32,7 +34,8 @@ def run_command(command):
 
     if result.returncode != 0:
         raise Exception(
-            "Command failed:\n" + result.stderr[-4000:]
+            "Command failed:\n" +
+            result.stderr[-4000:]
         )
 
     return result.stdout
@@ -51,7 +54,9 @@ def download_video(video_url, output_file):
     response.raise_for_status()
 
     with open(output_file, "wb") as f:
-        for chunk in response.iter_content(chunk_size=1024 * 1024):
+        for chunk in response.iter_content(
+            chunk_size=1024 * 1024
+        ):
             if chunk:
                 f.write(chunk)
 
@@ -59,9 +64,12 @@ def download_video(video_url, output_file):
 def get_duration(video_file):
     output = run_command([
         "ffprobe",
-        "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
         video_file
     ])
 
@@ -72,11 +80,15 @@ def extract_audio(video_file, audio_file):
     run_command([
         "ffmpeg",
         "-y",
-        "-i", video_file,
+        "-i",
+        video_file,
         "-vn",
-        "-ac", "1",
-        "-ar", "16000",
-        "-c:a", "mp3",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "mp3",
         audio_file
     ])
 
@@ -127,7 +139,87 @@ def assemblyai_transcribe(audio_file):
         status = data.get("status")
 
         if status == "completed":
-            return data.get("text", "")
+
+            words = data.get("words", [])
+
+            segments = []
+            current_words = []
+
+            for word in words:
+
+                current_words.append(word)
+
+                word_text = word.get(
+                    "text",
+                    ""
+                )
+
+                end_sentence = (
+                    word_text.endswith(".")
+                    or word_text.endswith("?")
+                    or word_text.endswith("!")
+                )
+
+                max_words = (
+                    len(current_words) >= 20
+                )
+
+                if end_sentence or max_words:
+
+                    start = (
+                        current_words[0]["start"]
+                        / 1000
+                    )
+
+                    end = (
+                        current_words[-1]["end"]
+                        / 1000
+                    )
+
+                    text = " ".join(
+                        w.get("text", "")
+                        for w in current_words
+                    ).strip()
+
+                    if text:
+                        segments.append({
+                            "start": start,
+                            "end": end,
+                            "text": text
+                        })
+
+                    current_words = []
+
+            if current_words:
+
+                start = (
+                    current_words[0]["start"]
+                    / 1000
+                )
+
+                end = (
+                    current_words[-1]["end"]
+                    / 1000
+                )
+
+                text = " ".join(
+                    w.get("text", "")
+                    for w in current_words
+                ).strip()
+
+                if text:
+                    segments.append({
+                        "start": start,
+                        "end": end,
+                        "text": text
+                    })
+
+            if not segments:
+                raise Exception(
+                    "AssemblyAI returned no speech segments"
+                )
+
+            return segments
 
         if status == "error":
             raise Exception(
@@ -155,10 +247,18 @@ def translate_text(text):
 
     data = response.json()
 
-    translated = data.get("responseData", {}).get("translatedText", "")
+    translated = data.get(
+        "responseData",
+        {}
+    ).get(
+        "translatedText",
+        ""
+    )
 
     if not translated:
-        raise Exception("MyMemory translation failed")
+        raise Exception(
+            "MyMemory translation failed"
+        )
 
     return translated
 
@@ -166,7 +266,11 @@ def translate_text(text):
 def create_tts(text, output_file):
     text_file = output_file + ".txt"
 
-    with open(text_file, "w", encoding="utf-8") as f:
+    with open(
+        text_file,
+        "w",
+        encoding="utf-8"
+    ) as f:
         f.write(text)
 
     run_command([
@@ -182,31 +286,256 @@ def create_tts(text, output_file):
     os.remove(text_file)
 
 
-def create_final_video(video_file, voice_file, output_file, duration):
+def get_audio_duration(audio_file):
+    output = run_command([
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        audio_file
+    ])
+
+    return float(output.strip())
+
+
+def create_dubbed_audio(
+    segments,
+    output_file,
+    job_dir,
+    total_duration
+):
+    audio_files = []
+    urdu_parts = []
+
+    for index, segment in enumerate(segments):
+
+        english_text = segment["text"]
+
+        print(
+            "Translating segment",
+            index + 1,
+            "/",
+            len(segments)
+        )
+
+        # Translate ONLY ONCE
+        urdu_text = translate_text(
+            english_text
+        )
+
+        if not urdu_text.strip():
+            continue
+
+        urdu_parts.append(
+            urdu_text
+        )
+
+        segment_file = os.path.join(
+            job_dir,
+            f"segment_{index}.mp3"
+        )
+
+        create_tts(
+            urdu_text,
+            segment_file
+        )
+
+        audio_duration = get_audio_duration(
+            segment_file
+        )
+
+        start = float(
+            segment["start"]
+        )
+
+        target_duration = max(
+            float(segment["end"]) - start,
+            0.5
+        )
+
+        # If Urdu voice is longer than its original
+        # segment, speed it up in two safe steps.
+        speed = (
+            audio_duration /
+            target_duration
+        )
+
+        if speed > 1.35:
+
+            adjusted_file = os.path.join(
+                job_dir,
+                f"segment_{index}_adjusted.mp3"
+            )
+
+            run_command([
+                "ffmpeg",
+                "-y",
+                "-i",
+                segment_file,
+                "-filter:a",
+                "atempo=1.35",
+                "-vn",
+                adjusted_file
+            ])
+
+            os.remove(segment_file)
+
+            segment_file = adjusted_file
+
+            audio_duration = get_audio_duration(
+                segment_file
+            )
+
+            speed = (
+                audio_duration /
+                target_duration
+            )
+
+        if speed > 1.35:
+
+            adjusted_file = os.path.join(
+                job_dir,
+                f"segment_{index}_adjusted2.mp3"
+            )
+
+            run_command([
+                "ffmpeg",
+                "-y",
+                "-i",
+                segment_file,
+                "-filter:a",
+                "atempo=1.35",
+                "-vn",
+                adjusted_file
+            ])
+
+            os.remove(segment_file)
+
+            segment_file = adjusted_file
+
+        audio_files.append({
+            "file": segment_file,
+            "start": start
+        })
+
+    if not audio_files:
+        raise Exception(
+            "No Urdu audio segments were created"
+        )
+
+    inputs = []
+    filters = []
+
+    for index, item in enumerate(audio_files):
+
+        inputs.extend([
+            "-i",
+            item["file"]
+        ])
+
+        delay_ms = int(
+            item["start"] * 1000
+        )
+
+        filters.append(
+            f"[{index}:a]"
+            f"adelay={delay_ms}|{delay_ms}"
+            f"[a{index}]"
+        )
+
+    mix_inputs = "".join(
+        f"[a{i}]"
+        for i in range(len(audio_files))
+    )
+
+    filter_complex = ";".join(
+        filters
+    )
+
+    filter_complex += (
+        f";{mix_inputs}"
+        f"amix="
+        f"inputs={len(audio_files)}:"
+        f"duration=longest:"
+        f"dropout_transition=0"
+        f",atrim=0:{total_duration}"
+        f"[out]"
+    )
+
+    command = [
+        "ffmpeg",
+        "-y"
+    ]
+
+    command.extend(inputs)
+
+    command.extend([
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[out]",
+        "-c:a",
+        "mp3",
+        "-b:a",
+        "128k",
+        "-t",
+        str(total_duration),
+        output_file
+    ])
+
+    run_command(command)
+
+    return "\n".join(
+        urdu_parts
+    )
+
+
+def create_final_video(
+    video_file,
+    voice_file,
+    output_file,
+    duration
+):
     run_command([
         "ffmpeg",
         "-y",
-        "-i", video_file,
-        "-i", voice_file,
-        "-map", "0:v:0",
-        "-map", "1:a:0",
-        "-c:v", "copy",
-        "-af", f"apad,atrim=0:{duration}",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-t", str(duration),
+        "-i",
+        video_file,
+        "-i",
+        voice_file,
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-t",
+        str(duration),
         "-shortest",
         output_file
     ])
 
 
 def upload_final_video(video_file):
-    filename = "translated_" + str(int(time.time())) + ".mp4"
+    filename = (
+        "translated_" +
+        str(int(time.time())) +
+        ".mp4"
+    )
 
     with open(video_file, "rb") as f:
+
         response = requests.post(
             UPLOAD_WORKER_URL +
-            "?filename=" + filename,
+            "?filename=" +
+            filename,
             files={
                 "videoFile": (
                     filename,
@@ -223,19 +552,31 @@ def upload_final_video(video_file):
 
 
 def process_video(video_url):
+
     if not ASSEMBLYAI_API_KEY:
         raise Exception(
             "ASSEMBLYAI_API_KEY secret is not configured"
         )
 
-    os.makedirs(TEMP_DIR, exist_ok=True)
+    os.makedirs(
+        TEMP_DIR,
+        exist_ok=True
+    )
 
     job_id = str(uuid.uuid4())
-    job_dir = os.path.join(TEMP_DIR, job_id)
 
-    os.makedirs(job_dir, exist_ok=True)
+    job_dir = os.path.join(
+        TEMP_DIR,
+        job_id
+    )
+
+    os.makedirs(
+        job_dir,
+        exist_ok=True
+    )
 
     try:
+
         video_file = os.path.join(
             job_dir,
             "input.mp4"
@@ -266,26 +607,39 @@ def process_video(video_url):
             "urdu.txt"
         )
 
-        print("Downloading video...")
+        print(
+            "Downloading video..."
+        )
 
         download_video(
             video_url,
             video_file
         )
 
-        duration = get_duration(video_file)
+        duration = get_duration(
+            video_file
+        )
 
-        print("Extracting audio...")
+        print(
+            "Extracting audio..."
+        )
 
         extract_audio(
             video_file,
             audio_file
         )
 
-        print("Transcribing with AssemblyAI...")
+        print(
+            "Transcribing with AssemblyAI..."
+        )
 
-        transcript = assemblyai_transcribe(
+        segments = assemblyai_transcribe(
             audio_file
+        )
+
+        english_text = "\n".join(
+            segment["text"]
+            for segment in segments
         )
 
         with open(
@@ -293,12 +647,17 @@ def process_video(video_url):
             "w",
             encoding="utf-8"
         ) as f:
-            f.write(transcript)
+            f.write(english_text)
 
-        print("Translating to Urdu...")
+        print(
+            "Creating Urdu dubbed audio..."
+        )
 
-        urdu_text = translate_text(
-            transcript
+        urdu_text = create_dubbed_audio(
+            segments,
+            voice_file,
+            job_dir,
+            duration
         )
 
         with open(
@@ -308,14 +667,9 @@ def process_video(video_url):
         ) as f:
             f.write(urdu_text)
 
-        print("Creating Urdu voice...")
-
-        create_tts(
-            urdu_text,
-            voice_file
+        print(
+            "Creating final video..."
         )
-
-        print("Creating final video...")
 
         create_final_video(
             video_file,
@@ -324,7 +678,9 @@ def process_video(video_url):
             duration
         )
 
-        print("Uploading final video to R2...")
+        print(
+            "Uploading final video to R2..."
+        )
 
         upload_result = upload_final_video(
             final_file
@@ -333,28 +689,38 @@ def process_video(video_url):
         return {
             "success": True,
             "job_id": job_id,
-            "message": "Video translation completed",
-            "transcript": transcript,
+            "message":
+                "Video translation completed",
+            "transcript": english_text,
             "translation": urdu_text,
             "result": upload_result
         }
 
     finally:
+
         shutil.rmtree(
             job_dir,
             ignore_errors=True
         )
 
 
-class Handler(BaseHTTPRequestHandler):
+class Handler(
+    BaseHTTPRequestHandler
+):
 
-    def send_json(self, status, data):
+    def send_json(
+        self,
+        status,
+        data
+    ):
         body = json.dumps(
             data,
             ensure_ascii=False
         ).encode("utf-8")
 
-        self.send_response(status)
+        self.send_response(
+            status
+        )
 
         self.send_header(
             "Content-Type",
@@ -368,44 +734,57 @@ class Handler(BaseHTTPRequestHandler):
 
         self.end_headers()
 
-        self.wfile.write(body)
+        self.wfile.write(
+            body
+        )
 
     def do_GET(self):
 
         if self.path == "/":
+
             self.send_json(
                 200,
                 {
                     "success": True,
-                    "service": "VideoTranslate AI",
-                    "status": "running"
+                    "service":
+                        "VideoTranslate AI",
+                    "status":
+                        "running"
                 }
             )
+
             return
 
         self.send_json(
             404,
             {
                 "success": False,
-                "message": "Not found"
+                "message":
+                    "Not found"
             }
         )
 
     def do_POST(self):
 
-        parsed = urlparse(self.path)
+        parsed = urlparse(
+            self.path
+        )
 
         if parsed.path != "/process":
+
             self.send_json(
                 404,
                 {
                     "success": False,
-                    "message": "Use POST /process"
+                    "message":
+                        "Use POST /process"
                 }
             )
+
             return
 
         try:
+
             content_length = int(
                 self.headers.get(
                     "Content-Length",
@@ -426,14 +805,16 @@ class Handler(BaseHTTPRequestHandler):
             )
 
             if not video_url:
+
                 self.send_json(
                     400,
                     {
                         "success": False,
                         "message":
-                        "video_url is required"
+                            "video_url is required"
                     }
                 )
+
                 return
 
             result = process_video(
@@ -457,8 +838,9 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "success": False,
                     "message":
-                    "Video processing failed",
-                    "error": str(error)
+                        "Video processing failed",
+                    "error":
+                        str(error)
                 }
             )
 
