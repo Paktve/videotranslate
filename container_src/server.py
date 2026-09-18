@@ -279,6 +279,10 @@ def create_tts(text, output_file):
         text_file,
         "--voice",
         "ur-PK-AsadNeural",
+        "--rate",
+        "-5%",
+        "--volume",
+        "+10%",
         "--write-media",
         output_file
     ])
@@ -321,7 +325,7 @@ def create_dubbed_audio(
             len(segments)
         )
 
-        # Translate ONLY ONCE
+        # Translate only once
         urdu_text = translate_text(
             english_text
         )
@@ -338,6 +342,13 @@ def create_dubbed_audio(
             f"segment_{index}.mp3"
         )
 
+        print(
+            "Creating Urdu voice segment",
+            index + 1,
+            "/",
+            len(segments)
+        )
+
         create_tts(
             urdu_text,
             segment_file
@@ -351,70 +362,25 @@ def create_dubbed_audio(
             segment["start"]
         )
 
-        target_duration = max(
-            float(segment["end"]) - start,
-            0.5
+        print(
+            "Voice duration:",
+            round(audio_duration, 2),
+            "seconds"
         )
 
-        # If Urdu voice is longer than its original
-        # segment, speed it up in two safe steps.
-        speed = (
-            audio_duration /
-            target_duration
+        print(
+            "Original segment:",
+            round(
+                float(segment["end"]) - start,
+                2
+            ),
+            "seconds"
         )
 
-        if speed > 1.35:
-
-            adjusted_file = os.path.join(
-                job_dir,
-                f"segment_{index}_adjusted.mp3"
-            )
-
-            run_command([
-                "ffmpeg",
-                "-y",
-                "-i",
-                segment_file,
-                "-filter:a",
-                "atempo=1.35",
-                "-vn",
-                adjusted_file
-            ])
-
-            os.remove(segment_file)
-
-            segment_file = adjusted_file
-
-            audio_duration = get_audio_duration(
-                segment_file
-            )
-
-            speed = (
-                audio_duration /
-                target_duration
-            )
-
-        if speed > 1.35:
-
-            adjusted_file = os.path.join(
-                job_dir,
-                f"segment_{index}_adjusted2.mp3"
-            )
-
-            run_command([
-                "ffmpeg",
-                "-y",
-                "-i",
-                segment_file,
-                "-filter:a",
-                "atempo=1.35",
-                "-vn",
-                adjusted_file
-            ])
-
-            os.remove(segment_file)
-
-            segment_file = adjusted_file
+        # IMPORTANT:
+        # Do NOT force the voice to become very fast.
+        # The previous 1.35x + 1.35x method caused
+        # unnatural fast speech.
 
         audio_files.append({
             "file": segment_file,
@@ -460,8 +426,12 @@ def create_dubbed_audio(
         f"amix="
         f"inputs={len(audio_files)}:"
         f"duration=longest:"
-        f"dropout_transition=0"
-        f",atrim=0:{total_duration}"
+        f"dropout_transition=0,"
+        f"loudnorm="
+        f"I=-16:"
+        f"TP=-1.5:"
+        f"LRA=11,"
+        f"atrim=0:{total_duration}"
         f"[out]"
     )
 
@@ -480,7 +450,9 @@ def create_dubbed_audio(
         "-c:a",
         "mp3",
         "-b:a",
-        "128k",
+        "192k",
+        "-ar",
+        "48000",
         "-t",
         str(total_duration),
         output_file
@@ -515,10 +487,9 @@ def create_final_video(
         "-c:a",
         "aac",
         "-b:a",
-        "128k",
+        "192k",
         "-t",
         str(duration),
-        "-shortest",
         output_file
     ])
 
