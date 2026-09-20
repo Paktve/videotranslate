@@ -7,6 +7,7 @@ import subprocess
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
 import requests
+import traceback
 
 
 PORT = 8080
@@ -1112,6 +1113,7 @@ class Handler(
                 "Processing error:",
                 str(error)
             )
+            traceback.print_exc()
 
             self.send_json(
                 500,
