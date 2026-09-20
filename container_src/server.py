@@ -355,22 +355,72 @@ def create_tts(
 
         f.write(text)
 
-    run_command([
-        "edge-tts",
-        "--file",
-        text_file,
-        "--voice",
+    voices = [
         "ur-PK-AsadNeural",
-        "--rate",
-        "0%",
-        "--volume",
-        "0%",
-        "--write-media",
-        output_file
-    ])
+        "ur-PK-UzmaNeural"
+    ]
 
-    os.remove(
-        text_file
+    last_error = None
+
+    try:
+
+        for voice in voices:
+
+            for attempt in range(1, 4):
+
+                try:
+
+                    print(
+                        "TTS voice:",
+                        voice,
+                        "| attempt:",
+                        attempt
+                    )
+
+                    run_command([
+                        "edge-tts",
+                        "--file",
+                        text_file,
+                        "--voice",
+                        voice,
+                        "--rate",
+                        "0%",
+                        "--write-media",
+                        output_file
+                    ])
+
+                    if (
+                        os.path.exists(output_file)
+                        and os.path.getsize(output_file) > 1000
+                    ):
+                        return
+
+                except Exception as error:
+
+                    last_error = error
+
+                    print(
+                        "TTS failed:",
+                        str(error)
+                    )
+
+                    if os.path.exists(
+                        output_file
+                    ):
+                        os.remove(
+                            output_file
+                        )
+
+                    time.sleep(2)
+
+    finally:
+
+        if os.path.exists(text_file):
+            os.remove(text_file)
+
+    raise Exception(
+        "Urdu TTS failed after all attempts: "
+        + str(last_error)
     )
 
 
