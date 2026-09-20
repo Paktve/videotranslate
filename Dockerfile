@@ -6,7 +6,7 @@ RUN apt-get update \
     && apt-get install -y ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir requests edge-tts
+RUN pip install --no-cache-dir requests edge-tts==7.2.8
 
 COPY container_src/server.py /app/server.py
 
