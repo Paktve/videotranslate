@@ -385,7 +385,7 @@ def create_tts(
                         "--voice",
                         voice,
                         "--rate",
-                        "+0%",
+                        "-5%",
                         "--write-media",
                         output_file
                     ])
